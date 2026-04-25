@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "napari-hardware-monitor"
+version = "0.1.0"
+description = "A lightweight napari dock widget for monitoring CPU, RAM, GPU, and VRAM during local AI and image analysis workflows."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Wulin Teo" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: napari",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    "napari",
+    "qtpy",
+    "psutil",
+]
+
+[project.urls]
+Homepage = "https://github.com/wulinteousa2-hash/napari-hardware-monitor"
+Repository = "https://github.com/wulinteousa2-hash/napari-hardware-monitor"
+Issues = "https://github.com/wulinteousa2-hash/napari-hardware-monitor/issues"
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+]
+
+[project.entry-points."napari.manifest"]
+napari-hardware-monitor = "napari_hardware_monitor:napari.yaml"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+napari_hardware_monitor = ["napari.yaml"]

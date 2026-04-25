@@ -1,0 +1,14 @@
+name: napari-hardware-monitor
+display_name: Hardware Monitor
+visibility: public
+categories:
+  - Utilities
+  
+contributions:
+  commands:
+    - id: napari-hardware-monitor.make_widget
+      python_name: napari_hardware_monitor.widget:HardwareMonitorWidget
+      title: Open Hardware Monitor
+  widgets:
+    - command: napari-hardware-monitor.make_widget
+      display_name: Hardware Monitor
