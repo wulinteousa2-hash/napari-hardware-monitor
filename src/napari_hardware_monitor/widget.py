@@ -6,7 +6,7 @@ from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import List, Optional
 
-from qtpy.QtCore import QRectF, QSize, Qt, QTimer
+from qtpy.QtCore import QElapsedTimer, QRectF, QSize, Qt, QTimer
 from qtpy.QtGui import QColor, QFont, QPainter, QPen
 from qtpy.QtWidgets import (
     QApplication,
@@ -22,7 +22,12 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from .hardware import HardwareSnapshot, get_hardware_snapshot, snapshot_to_text
+from .hardware import (
+    HardwareSnapshot,
+    napariHealthStats,
+    get_hardware_snapshot,
+    snapshot_to_text,
+)
 
 
 CARD_STYLE = """
@@ -263,6 +268,62 @@ class MetricCard(QFrame):
         self.sparkline.set_values(history)
 
 
+class HealthCard(QFrame):
+    """Readable napari UI responsiveness status."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setObjectName("metricCard")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
+
+        self.title_label = QLabel("napari Health")
+        self.title_label.setObjectName("titleLabel")
+        layout.addWidget(self.title_label)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(row)
+
+        self.status_label = QLabel("Healthy")
+        self.status_label.setStyleSheet("font-size: 21px; font-weight: 800; color: #76d100;")
+        row.addWidget(self.status_label, 1)
+
+        self.delay_label = QLabel("UI delay: 0 ms")
+        self.delay_label.setObjectName("subtleLabel")
+        self.delay_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        row.addWidget(self.delay_label)
+
+        self.hint_label = QLabel("napari UI is responding normally.")
+        self.hint_label.setObjectName("subtleLabel")
+        self.hint_label.setWordWrap(True)
+        layout.addWidget(self.hint_label)
+
+        self.sparkline = SparklineWidget()
+        self.sparkline.setMinimumHeight(30)
+        layout.addWidget(self.sparkline)
+
+    def update_health(self, health: napariHealthStats, history) -> None:
+        self.status_label.setText(health.status)
+        self.delay_label.setText(f"UI delay: {health.event_loop_delay_ms:.0f} ms")
+        self.hint_label.setText(health.hint)
+        self.sparkline.set_values(history)
+
+        if health.status == "Healthy":
+            color = "#76d100"
+        elif health.status == "Busy":
+            color = "#ffca3a"
+        elif health.status == "Lagging":
+            color = "#ff9f1a"
+        else:
+            color = "#ff3b30"
+        self.status_label.setStyleSheet(
+            f"font-size: 21px; font-weight: 800; color: {color};"
+        )
+
+
 class HardwareMonitorWidget(QWidget):
     """Main napari dock widget."""
 
@@ -270,8 +331,15 @@ class HardwareMonitorWidget(QWidget):
         super().__init__()
 
         self.viewer = napari_viewer
-        self._compact_max_height = 520
-        self._expanded_max_height = 760
+        self._compact_max_height = 640
+        self._expanded_max_height = 880
+        self._health_interval_ms = 500
+        self._health_clock = QElapsedTimer()
+        self.current_health = napariHealthStats(
+            status="Healthy",
+            event_loop_delay_ms=0.0,
+            hint="napari UI is responding normally.",
+        )
         self.current_snapshot: Optional[HardwareSnapshot] = None
         self._executor = ThreadPoolExecutor(
             max_workers=1,
@@ -283,19 +351,24 @@ class HardwareMonitorWidget(QWidget):
             "ram": deque(maxlen=90),
             "gpu": deque(maxlen=90),
             "vram": deque(maxlen=90),
+            "health": deque(maxlen=90),
         }
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.request_update)
+        self.health_timer = QTimer(self)
+        self.health_timer.timeout.connect(self._sample_napari_health)
 
-        self.setMinimumWidth(300)
+        self.setMinimumWidth(360)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self._build_ui()
+        self._health_clock.start()
+        self.health_timer.start(self._health_interval_ms)
         self.start_monitoring()
 
     def sizeHint(self) -> QSize:  # noqa: N802
         expanded = hasattr(self, "cores_panel") and self.cores_panel.isVisible()
-        return QSize(320, self._expanded_max_height if expanded else self._compact_max_height)
+        return QSize(390, self._expanded_max_height if expanded else self._compact_max_height)
 
     def _build_ui(self) -> None:
         """Build a compact dashboard UI."""
@@ -315,6 +388,9 @@ class HardwareMonitorWidget(QWidget):
         self.gpu_label.setObjectName("subtleLabel")
         self.gpu_label.setWordWrap(True)
         main_layout.addWidget(self.gpu_label)
+
+        self.health_card = HealthCard()
+        main_layout.addWidget(self.health_card)
 
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
@@ -468,6 +544,8 @@ class HardwareMonitorWidget(QWidget):
         if self.timer.isActive():
             self.status_label.setText(f"Last sample updated; next in {self.refresh_combo.currentText()}")
 
+        self._update_health_display()
+
     def _append_history(self, name: str, value: float) -> None:
         self._histories[name].append(_clamp_percent(value))
 
@@ -478,7 +556,7 @@ class HardwareMonitorWidget(QWidget):
             return
 
         clipboard = QApplication.clipboard()
-        clipboard.setText(snapshot_to_text(self.current_snapshot))
+        clipboard.setText(snapshot_to_text(self.current_snapshot, self.current_health))
 
         self.status_label.setText("Snapshot copied to clipboard")
 
@@ -505,8 +583,58 @@ class HardwareMonitorWidget(QWidget):
         if self.timer.isActive():
             self.start_monitoring()
 
+    def _sample_napari_health(self) -> None:
+        """Measure Qt event-loop delay as a napari responsiveness signal."""
+        elapsed_ms = max(0, self._health_clock.restart())
+        delay_ms = max(0.0, float(elapsed_ms - self._health_interval_ms))
+        self.current_health = self._make_health_stats(delay_ms)
+        self._append_history("health", min(100.0, delay_ms / 30.0))
+        self._update_health_display()
+
+    def _make_health_stats(self, delay_ms: float) -> napariHealthStats:
+        if delay_ms < 150:
+            status = "Healthy"
+        elif delay_ms < 750:
+            status = "Busy"
+        elif delay_ms < 2000:
+            status = "Lagging"
+        else:
+            status = "Frozen recently"
+
+        return napariHealthStats(
+            status=status,
+            event_loop_delay_ms=delay_ms,
+            hint=self._health_hint(status),
+        )
+
+    def _health_hint(self, status: str) -> str:
+        if status == "Healthy":
+            return "napari UI is responding normally."
+
+        if self.current_snapshot is None:
+            return "napari UI is delayed; waiting for hardware sample."
+
+        cpu_ram = self.current_snapshot.cpu_ram
+        gpu = self.current_snapshot.gpu
+        if cpu_ram.ram_percent >= 90:
+            return "System memory is nearly full; napari may pause while data swaps or allocates."
+        if gpu.available and gpu.vram_total_gb and gpu.vram_total_gb > 0:
+            vram_percent = 100 * (gpu.vram_used_gb or 0) / gpu.vram_total_gb
+            if vram_percent >= 90:
+                return "GPU memory is nearly full; image or model work may stall."
+        if cpu_ram.cpu_percent >= 90:
+            return "CPU is saturated; a long calculation may be slowing napari."
+        if gpu.available and (gpu.gpu_util_percent or 0) >= 90:
+            return "GPU is heavily used; rendering or model inference may be busy."
+        return "Hardware is not maxed out; a plugin or task may be blocking the Qt main thread."
+
+    def _update_health_display(self) -> None:
+        self.current_health.hint = self._health_hint(self.current_health.status)
+        self.health_card.update_health(self.current_health, self._histories["health"])
+
     def closeEvent(self, event) -> None:  # noqa: N802
         self.timer.stop()
+        self.health_timer.stop()
         self._executor.shutdown(wait=False, cancel_futures=True)
         super().closeEvent(event)
 

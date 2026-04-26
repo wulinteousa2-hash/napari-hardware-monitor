@@ -2,6 +2,7 @@ from napari_hardware_monitor.hardware import (
     CpuRamStats,
     GpuStats,
     HardwareSnapshot,
+    napariHealthStats,
     get_cpu_ram_stats,
     get_nvidia_gpu_stats,
     snapshot_to_text,
@@ -38,6 +39,33 @@ def test_snapshot_to_text_cpu_only():
     assert "CPU Cores: 1:10%, 2:15%" in text
     assert "RAM: 8.0 / 32.0 GB" in text
     assert "GPU: not available" in text
+
+
+def test_snapshot_to_text_includes_napari_health_when_available():
+    snapshot = HardwareSnapshot(
+        cpu_ram=CpuRamStats(
+            cpu_percent=91.0,
+            cpu_per_core_percent=[90.0, 92.0],
+            ram_used_gb=28.0,
+            ram_total_gb=32.0,
+            ram_percent=87.5,
+        ),
+        gpu=GpuStats(
+            available=False,
+            error="nvidia-smi not found",
+        ),
+    )
+    health = napariHealthStats(
+        status="Lagging",
+        event_loop_delay_ms=1234.0,
+        hint="CPU is saturated; a long calculation may be slowing napari.",
+    )
+
+    text = snapshot_to_text(snapshot, health)
+
+    assert "napari Health: Lagging" in text
+    assert "UI Delay: 1234 ms" in text
+    assert "Health Hint: CPU is saturated" in text
 
 
 def test_get_nvidia_gpu_stats_aggregates_multiple_gpus(monkeypatch):

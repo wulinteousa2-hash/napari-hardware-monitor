@@ -1,15 +1,18 @@
 # napari-hardware-monitor
 
-Lightweight local hardware monitoring for napari.
+Lightweight local hardware and responsiveness monitoring for napari.
 
-`napari-hardware-monitor` adds a compact dashboard dock for watching CPU, system memory, GPU activity, and GPU memory while image-analysis and local AI workflows run. It is designed for users who want immediate visibility into whether napari, segmentation models, vision models, or large image data are putting pressure on the machine.
+`napari-hardware-monitor` adds a compact dashboard dock for watching napari health, CPU, system memory, GPU activity, and GPU memory while image-analysis and local AI workflows run. It is designed for users who want immediate visibility into whether napari is responding normally and whether segmentation models, vision models, or large image data are putting pressure on the machine.
 
-![napari-hardware-monitor widget](docs/napari-hardware-monitor.png)
+![napari-hardware-monitor widget](docs/napari-hardware-monitor_v1.png)
 
 ## First Release
 
-Version `0.1.0` focuses on a small, reliable monitor:
+Version `1.0.0` focuses on a small, reliable monitor:
 
+- obvious napari Health card for UI responsiveness
+- event-loop delay readout for spotting lag or recent freezes
+- short health hints for likely causes such as CPU saturation, memory pressure, or main-thread blocking
 - compact dark dashboard with gauge cards and short history traces
 - CPU utilization
 - optional per-core CPU utilization
@@ -26,24 +29,24 @@ Per-core CPU detail is collapsed by default. The main view stays focused on the 
 
 ## Why This Plugin Exists
 
-Local image analysis is increasingly hardware-dependent. When a user loads a large TIFF or OME-Zarr, runs SAM, Cellpose, StarDist, a local Ollama vision model, or another GPU-backed workflow, they often need to know:
+Local image analysis is increasingly hardware-dependent. When a user loads a large TIFF or OME-Zarr, runs local SAM3, chat-assistant or another GPU-backed workflow, they often need to know:
 
 - Is the GPU actually being used?
 - Is VRAM full?
 - Is system RAM becoming the bottleneck?
+- Is napari healthy, lagging, or recently frozen?
 - Is the CPU busy while the GPU is idle?
 - Did a model finish, stall, or continue running in the background?
 
-This plugin gives that signal directly inside napari without opening a separate system monitor.
+This plugin gives that signal directly inside napari without opening a separate system monitor. It also watches the Qt event loop so users can tell the difference between a busy machine and a napari UI that is becoming unresponsive.
 
 ## Scope
 
-`napari-hardware-monitor` is a hardware visibility plugin. It is not a profiler, model launcher, training manager, benchmark suite, or process attribution tool.
+`napari-hardware-monitor` is a hardware and responsiveness visibility plugin. It is not a profiler, model launcher, training manager, benchmark suite, or process attribution tool.
 
 It is meant to sit beside tools such as:
 
 - `napari-chat-assistant`: local text assistant
-- `napari-vision-assistant`: local image + text vision assistant
 - segmentation and model plugins that consume CPU/GPU resources
 
 The values are system-level. They tell users what the machine is doing, not which exact plugin or process caused the load.
@@ -70,7 +73,7 @@ Controls:
 - `Pause`: stop polling while keeping the last values visible.
 - `1s / 2s / 5s`: choose refresh interval. `2s` is the default balance between responsiveness and overhead.
 - `Float`: detach the monitor dock when the napari dock container supports it.
-- `Copy`: copy a plain-text hardware snapshot.
+- `Copy`: copy a plain-text hardware and napari health snapshot.
 - `CPU cores`: expand optional per-core CPU usage.
 
 ## Installation
@@ -92,12 +95,23 @@ napari
 ## Design Notes
 
 - Polling runs off the Qt UI thread so a slow `nvidia-smi` call does not freeze the dock.
+- napari Health is measured on the Qt UI thread using event-loop delay. A large delay means napari was busy or recently unresponsive.
 - The dashboard uses Qt painting directly and avoids heavy plotting dependencies.
 - The dashboard keeps only a short in-memory history, so it stays lightweight during long napari sessions.
 - Individual CPU cores are available as an optional detail panel, not as default dashboard clutter.
 - The first release intentionally stays small: clear local hardware visibility is the core value.
 
 ## Release Notes
+
+### 1.0.0
+
+Stable responsiveness release.
+
+- Added napari Health card.
+- Added Qt event-loop delay monitoring.
+- Added readable health states: Healthy, Busy, Lagging, and Frozen recently.
+- Added health hints for common bottlenecks.
+- Added napari health details to copied snapshots.
 
 ### 0.1.0
 

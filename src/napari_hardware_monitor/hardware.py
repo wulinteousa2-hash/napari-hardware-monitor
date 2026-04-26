@@ -48,6 +48,13 @@ class HardwareSnapshot:
     gpu: GpuStats
 
 
+@dataclass
+class napariHealthStats:
+    status: str
+    event_loop_delay_ms: float
+    hint: str
+
+
 def get_cpu_ram_stats() -> CpuRamStats:
     """
     Return CPU and system RAM usage.
@@ -163,7 +170,10 @@ def get_hardware_snapshot() -> HardwareSnapshot:
     )
 
 
-def snapshot_to_text(snapshot: HardwareSnapshot) -> str:
+def snapshot_to_text(
+    snapshot: HardwareSnapshot,
+    health: Optional[napariHealthStats] = None,
+) -> str:
     """
     Convert hardware snapshot to plain text for clipboard/debugging.
     """
@@ -177,6 +187,16 @@ def snapshot_to_text(snapshot: HardwareSnapshot) -> str:
         f"CPU Cores: {_format_cpu_cores(cpu_ram.cpu_per_core_percent)}",
         f"RAM: {cpu_ram.ram_used_gb:.1f} / {cpu_ram.ram_total_gb:.1f} GB ({cpu_ram.ram_percent:.1f}%)",
     ]
+
+    if health is not None:
+        lines.extend(
+            [
+                "",
+                f"napari Health: {health.status}",
+                f"UI Delay: {health.event_loop_delay_ms:.0f} ms",
+                f"Health Hint: {health.hint}",
+            ]
+        )
 
     if gpu.available:
         vram_text = "N/A"

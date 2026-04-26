@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "napari-hardware-monitor"
-version = "0.1.0"
-description = "A lightweight napari dock widget for monitoring CPU, RAM, GPU, and VRAM during local AI and image analysis workflows."
+version = "1.0.0"
+description = "A lightweight napari dock widget for monitoring hardware and UI responsiveness during local AI and image analysis workflows."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "BSD-3-Clause"
@@ -14,7 +14,7 @@ authors = [
     { name = "Wulin Teo" }
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Framework :: napari",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
