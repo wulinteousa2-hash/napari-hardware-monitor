@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import List, Optional
@@ -240,6 +241,7 @@ class MetricCard(QFrame):
     def __init__(self, title: str, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setObjectName("metricCard")
+        self.setMinimumHeight(176)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
@@ -260,6 +262,7 @@ class MetricCard(QFrame):
         layout.addWidget(self.detail_label)
 
         self.sparkline = SparklineWidget()
+        self.sparkline.setMinimumHeight(34)
         layout.addWidget(self.sparkline)
 
     def update_metric(self, value: float, center_text: str, detail: str, history) -> None:
@@ -274,6 +277,7 @@ class HealthCard(QFrame):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setObjectName("metricCard")
+        self.setMinimumHeight(132)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
@@ -301,6 +305,10 @@ class HealthCard(QFrame):
         self.hint_label.setWordWrap(True)
         layout.addWidget(self.hint_label)
 
+        self.recent_freeze_label = QLabel("Recent freeze: none")
+        self.recent_freeze_label.setObjectName("subtleLabel")
+        layout.addWidget(self.recent_freeze_label)
+
         self.sparkline = SparklineWidget()
         self.sparkline.setMinimumHeight(30)
         layout.addWidget(self.sparkline)
@@ -309,6 +317,7 @@ class HealthCard(QFrame):
         self.status_label.setText(health.status)
         self.delay_label.setText(f"UI delay: {health.event_loop_delay_ms:.0f} ms")
         self.hint_label.setText(health.hint)
+        self.recent_freeze_label.setText(_format_recent_freeze(health))
         self.sparkline.set_values(history)
 
         if health.status == "Healthy":
@@ -331,10 +340,13 @@ class HardwareMonitorWidget(QWidget):
         super().__init__()
 
         self.viewer = napari_viewer
-        self._compact_max_height = 640
-        self._expanded_max_height = 880
+        self._compact_max_height = 760
+        self._expanded_max_height = 1000
         self._health_interval_ms = 500
+        self._recent_freeze_hold_s = 60
         self._health_clock = QElapsedTimer()
+        self._recent_freeze_delay_ms: Optional[float] = None
+        self._recent_freeze_time_s: Optional[float] = None
         self.current_health = napariHealthStats(
             status="Healthy",
             event_loop_delay_ms=0.0,
@@ -441,7 +453,7 @@ class HardwareMonitorWidget(QWidget):
         controls.addWidget(self.refresh_combo)
 
         self.float_button = QPushButton("Float")
-        self.float_button.setToolTip("Detach this monitor dock into a floating window.")
+        self.float_button.setToolTip("Detach or reattach this monitor dock.")
         self.float_button.clicked.connect(self.float_dock)
         controls.addWidget(self.float_button)
 
@@ -561,22 +573,24 @@ class HardwareMonitorWidget(QWidget):
         self.status_label.setText("Snapshot copied to clipboard")
 
     def float_dock(self) -> None:
-        """Ask the containing napari dock widget to float when available."""
-        parent = self.parent()
-        while parent is not None:
-            if hasattr(parent, "setFloating"):
-                parent.setFloating(True)
-                parent.resize(self.sizeHint())
-                self.status_label.setText("Detached as floating dock")
-                return
-            parent = parent.parent()
-        self.status_label.setText("Use the dock title-bar button to detach")
+        """Toggle the containing napari dock between docked and floating."""
+        dock = self._dock_widget()
+        if dock is None:
+            self.status_label.setText("Use the dock title-bar button to detach")
+            return
+
+        is_floating = bool(dock.isFloating()) if hasattr(dock, "isFloating") else False
+        dock.setFloating(not is_floating)
+        self._apply_current_height()
+        self._update_float_button()
+        self.status_label.setText(
+            "Attached as dock widget" if is_floating else "Detached as floating dock"
+        )
 
     def _toggle_cpu_cores(self, checked: bool) -> None:
         self.cores_panel.setVisible(checked)
         self.cores_toggle.setText("CPU cores expanded" if checked else "CPU cores")
-        self.setMaximumHeight(self._expanded_max_height if checked else self._compact_max_height)
-        self.updateGeometry()
+        self._apply_current_height()
 
     def _on_refresh_changed(self) -> None:
         """Apply new refresh interval if monitoring is already active."""
@@ -587,6 +601,7 @@ class HardwareMonitorWidget(QWidget):
         """Measure Qt event-loop delay as a napari responsiveness signal."""
         elapsed_ms = max(0, self._health_clock.restart())
         delay_ms = max(0.0, float(elapsed_ms - self._health_interval_ms))
+        self._record_recent_freeze(delay_ms)
         self.current_health = self._make_health_stats(delay_ms)
         self._append_history("health", min(100.0, delay_ms / 30.0))
         self._update_health_display()
@@ -605,7 +620,26 @@ class HardwareMonitorWidget(QWidget):
             status=status,
             event_loop_delay_ms=delay_ms,
             hint=self._health_hint(status),
+            recent_freeze_delay_ms=self._recent_freeze_delay_ms,
+            recent_freeze_age_s=self._recent_freeze_age_s(),
         )
+
+    def _record_recent_freeze(self, delay_ms: float) -> None:
+        now = time.monotonic()
+        if delay_ms >= 2000:
+            self._recent_freeze_delay_ms = delay_ms
+            self._recent_freeze_time_s = now
+            return
+        if self._recent_freeze_time_s is None:
+            return
+        if now - self._recent_freeze_time_s > self._recent_freeze_hold_s:
+            self._recent_freeze_delay_ms = None
+            self._recent_freeze_time_s = None
+
+    def _recent_freeze_age_s(self) -> Optional[float]:
+        if self._recent_freeze_time_s is None:
+            return None
+        return max(0.0, time.monotonic() - self._recent_freeze_time_s)
 
     def _health_hint(self, status: str) -> str:
         if status == "Healthy":
@@ -632,6 +666,37 @@ class HardwareMonitorWidget(QWidget):
         self.current_health.hint = self._health_hint(self.current_health.status)
         self.health_card.update_health(self.current_health, self._histories["health"])
 
+    def _apply_current_height(self) -> None:
+        target_height = (
+            self._expanded_max_height
+            if self.cores_panel.isVisible()
+            else self._compact_max_height
+        )
+        self.setMaximumHeight(target_height)
+        self.updateGeometry()
+        self.adjustSize()
+
+        dock = self._dock_widget()
+        if dock is not None:
+            dock.updateGeometry()
+            dock.adjustSize()
+            dock.resize(max(dock.width(), self.sizeHint().width()), target_height)
+
+    def _dock_widget(self):
+        parent = self.parent()
+        while parent is not None:
+            if hasattr(parent, "setFloating"):
+                return parent
+            parent = parent.parent()
+        return None
+
+    def _update_float_button(self) -> None:
+        dock = self._dock_widget()
+        if dock is not None and hasattr(dock, "isFloating") and dock.isFloating():
+            self.float_button.setText("Attach")
+            return
+        self.float_button.setText("Float")
+
     def closeEvent(self, event) -> None:  # noqa: N802
         self.timer.stop()
         self.health_timer.stop()
@@ -646,3 +711,15 @@ def _load_hint(value: float) -> str:
     if value < 80:
         return "active"
     return "high"
+
+
+def _format_recent_freeze(health: napariHealthStats) -> str:
+    if (
+        health.recent_freeze_delay_ms is None
+        or health.recent_freeze_age_s is None
+    ):
+        return "Recent freeze: none"
+    return (
+        f"Recent freeze: {health.recent_freeze_delay_ms:.0f} ms, "
+        f"{health.recent_freeze_age_s:.0f}s ago"
+    )

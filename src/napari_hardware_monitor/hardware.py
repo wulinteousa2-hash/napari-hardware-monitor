@@ -53,6 +53,8 @@ class napariHealthStats:
     status: str
     event_loop_delay_ms: float
     hint: str
+    recent_freeze_delay_ms: Optional[float] = None
+    recent_freeze_age_s: Optional[float] = None
 
 
 def get_cpu_ram_stats() -> CpuRamStats:
@@ -189,11 +191,21 @@ def snapshot_to_text(
     ]
 
     if health is not None:
+        recent_freeze = "None"
+        if (
+            health.recent_freeze_delay_ms is not None
+            and health.recent_freeze_age_s is not None
+        ):
+            recent_freeze = (
+                f"{health.recent_freeze_delay_ms:.0f} ms, "
+                f"{health.recent_freeze_age_s:.0f}s ago"
+            )
         lines.extend(
             [
                 "",
                 f"napari Health: {health.status}",
                 f"UI Delay: {health.event_loop_delay_ms:.0f} ms",
+                f"Recent Freeze: {recent_freeze}",
                 f"Health Hint: {health.hint}",
             ]
         )

@@ -59,12 +59,15 @@ def test_snapshot_to_text_includes_napari_health_when_available():
         status="Lagging",
         event_loop_delay_ms=1234.0,
         hint="CPU is saturated; a long calculation may be slowing napari.",
+        recent_freeze_delay_ms=4500.0,
+        recent_freeze_age_s=18.0,
     )
 
     text = snapshot_to_text(snapshot, health)
 
     assert "napari Health: Lagging" in text
     assert "UI Delay: 1234 ms" in text
+    assert "Recent Freeze: 4500 ms, 18s ago" in text
     assert "Health Hint: CPU is saturated" in text
 
 
